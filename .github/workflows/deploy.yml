@@ -1,0 +1,71 @@
+name: Deploy to AWS Lambda
+
+on:
+  push:
+    paths:
+      - 'src/**'
+    branches:
+      - main
+
+jobs:
+  test-and-deploy:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout Code
+      uses: actions/checkout@v3
+
+    # MATCH AWS RUNTIME (Use 3.14 or closest available stable)
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.14-dev' # Or '3.13' if 3.14 isn't in Actions yet
+
+    # --- STEP 1: SAFETY CHECK (Linter) ---
+    # This prevents deploying broken code (e.g., missing indentations)
+    - name: Install Dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install flake8 boto3
+        
+    - name: Run Linter (Dry Run)
+      run: |
+        # stop the build if there are Python syntax errors or undefined names
+        flake8 src/ --count --select=E9,F63,F7,F82 --show-source --statistics
+
+    # --- STEP 2: PREPARE ZIP ---
+    - name: Install Zip Tool
+      run: sudo apt-get install zip
+
+    - name: Package RateLimiter
+      run: |
+        cd src
+        zip rate_limiter.zip RateLimiterLogic.py
+
+    - name: Package Admin
+      run: |
+        cd src
+        zip admin.zip fluxcontrolAdmin.py
+
+    # --- STEP 3: DEPLOY ---
+    - name: Deploy RateLimiterLogic
+      uses: appleboy/lambda-action@v0.1.9
+      with:
+        aws_access_key_id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        aws_secret_access_key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        aws_region: ${{ secrets.AWS_REGION }}
+        function_name: RateLimiterLogic
+        zip_file: src/rate_limiter.zip
+        # THIS LINE OVERWRITES YOUR AWS CONSOLE SETTING
+        handler: RateLimiterLogic.lambda_handler
+
+    - name: Deploy fluxcontrolAdmin
+      uses: appleboy/lambda-action@v0.1.9
+      with:
+        aws_access_key_id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        aws_secret_access_key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        aws_region: ${{ secrets.AWS_REGION }}
+        function_name: fluxcontrolAdmin
+        zip_file: src/admin.zip
+        # THIS LINE OVERWRITES YOUR AWS CONSOLE SETTING
+        handler: fluxcontrolAdmin.lambda_handler

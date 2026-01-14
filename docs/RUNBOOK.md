@@ -97,6 +97,12 @@ sudo systemctl enable fluxapi
 sudo systemctl start fluxapi
 ```
 ## 4. Lambda Deployment (The Core)
+
+***
+
+**NOTE:** The deployment of the Lambda functions is now automated through a CI/CD pipeline using GitHub Actions. Any push to the `main` branch with changes in the `src` directory will automatically deploy the functions. The steps below are for manual deployment and are preserved for reference or emergency use.
+
+***
 ### Step 4.1: RateLimiterLogic 
 Create Function: `RateLimiterLogic` (Python 3.12).
 

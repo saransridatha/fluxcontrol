@@ -4,182 +4,182 @@ import time
 import os
 import urllib.request
 import urllib.error
+import logging
 from datetime import datetime
+from botocore.exceptions import ClientError
+
+# --- LOGGING CONFIGURATION ---
+# Sets up structured logging. In production, this allows you to search logs by "level" or "ip".
+logger = logging.getLogger()
+logger.setLevel(logging.INFO)
 
 # --- RESOURCES ---
-# We initialize these outside the handler for better performance (Connection Reuse)
+# Initialized outside handler for "Execution Context Reuse" (Faster warm starts)
 dynamodb = boto3.resource('dynamodb')
 rate_table = dynamodb.Table(os.environ.get('TABLE_NAME', 'RateLimitTable'))
 reputation_table = dynamodb.Table('IPReputationTable') 
 
 # --- CONFIGURATION ---
-LIMIT = 5            # 5 requests per window
-WINDOW = 10          # 10s window
-MAX_VIOLATIONS = 50  # 50 blocks allowed per day
-BAN_DURATION = 86400 # 24 Hours in seconds (1 Day)
-# Default to localhost if not set, but you MUST set this in Lambda Env Vars
+LIMIT = int(os.environ.get('RATE_LIMIT', 5))
+WINDOW = int(os.environ.get('WINDOW_SECONDS', 10))
+MAX_VIOLATIONS = int(os.environ.get('MAX_VIOLATIONS', 50))
+BAN_DURATION = 86400  # 24 Hours
 TARGET_API_URL = os.environ.get('TARGET_API_URL', 'http://127.0.0.1:8000/')
 
 def lambda_handler(event, context):
-    print("STEP 1: Lambda Started. Parsing Event...")
-    
+    """
+    Main Entry Point.
+    Uses Atomic Counters to enforce rate limits and forwards traffic if allowed.
+    """
     try:
-        # 1. Get User Identity (IP)
-        # Handle cases where sourceIp might be missing (local testing)
-        if 'requestContext' in event and 'identity' in event['requestContext']:
-            user_ip = event['requestContext']['identity']['sourceIp']
-        else:
-            user_ip = "127.0.0.1" # Fallback for testing
-            
+        # 1. PARSE & VALIDATE INPUT
+        # Handle API Gateway "Proxy Integration" event structure
+        request_context = event.get('requestContext', {})
+        identity = request_context.get('identity', {})
+        
+        # Fallback to "Unknown" if testing locally or missing IP
+        user_ip = identity.get('sourceIp', 'unknown-ip')
+        
         current_time = int(time.time())
         today_str = datetime.utcnow().strftime('%Y-%m-%d')
-
-        print(f"User IP: {user_ip} | Target: {TARGET_API_URL}")
+        
+        logger.info(json.dumps({
+            "event": "request_received",
+            "ip": user_ip,
+            "target": TARGET_API_URL
+        }))
 
         # --- PHASE 1: PRISON CHECK (The 24h Ban) ---
-        print("STEP 2: Checking Reputation Table...")
-        try:
-            rep_response = reputation_table.get_item(Key={'ip_address': user_ip})
-            if 'Item' in rep_response:
-                rep = rep_response['Item']
-                
-                # Check if banned
-                if rep.get('is_banned') and current_time < int(rep.get('ban_expiry', 0)):
-                    print(f"BLOCKED: User {user_ip} is BANNED until {rep.get('ban_expiry')}")
-                    return {
-                        'statusCode': 403,
-                        'body': json.dumps({'error': 'You are banned for 24 hours due to excessive abuse.'})
-                    }
-        except Exception as e:
-            # If DB fails, we fail open (allow request) or log error
-            print(f"STEP 2 ERROR: Failed to read Reputation Table: {e}")
-            # We proceed to rate limit check even if this fails
+        if is_ip_banned(user_ip, current_time):
+            logger.warning(json.dumps({"event": "access_denied", "reason": "banned", "ip": user_ip}))
+            return {
+                'statusCode': 403,
+                'headers': {'Content-Type': 'application/json'},
+                'body': json.dumps({'error': 'Access Denied', 'message': 'You are temporarily banned due to excessive abuse.'})
+            }
 
         # --- PHASE 2: RATE LIMIT CHECK (The 10s Window) ---
-        print("STEP 3: Checking Rate Limit (Atomic Counter)...")
-        
-        # Calculate Window ID (e.g., 12:00:00, 12:00:10)
+        # Calculate Window ID (Floors time to nearest 10s: 12:00:00, 12:00:10...)
         window_id = int(current_time // WINDOW) * WINDOW
-        key = f"{user_ip}-{window_id}"
+        rate_key = f"{user_ip}-{window_id}"
         
-        try:
-            # Atomic Increment
-            response = rate_table.update_item(
-                Key={'client_id': key},
-                UpdateExpression="ADD request_count :inc SET expires_at = :exp",
-                ExpressionAttributeValues={
-                    ':inc': 1, 
-                    ':exp': current_time + 60 # TTL
-                },
-                ReturnValues="UPDATED_NEW"
-            )
-            # DynamoDB returns Decimal, convert to int
-            current_count = int(response['Attributes']['request_count'])
-            print(f"Count for {key}: {current_count}")
-            
-        except Exception as e:
-            print(f"STEP 3 ERROR: Rate Limit DB Failed: {e}")
-            return {'statusCode': 500, 'body': 'Internal Database Error'}
+        current_count = increment_request_count(rate_key, current_time)
 
         # --- PHASE 3: JUDGMENT ---
         if current_count > LIMIT:
-            print(f"VIOLATION: User {user_ip} exceeded limit ({current_count}/{LIMIT})")
+            logger.warning(json.dumps({
+                "event": "rate_limit_exceeded", 
+                "ip": user_ip, 
+                "count": current_count, 
+                "limit": LIMIT
+            }))
             
-            # Record this strike on their permanent record
+            # Async-like call to record violation (Keep it fast)
             record_violation(user_ip, today_str, current_time)
             
             return {
                 'statusCode': 429,
-                'body': json.dumps({
-                    'error': 'Too Many Requests', 
-                    'message': 'Slow down! Rate limit exceeded.'
-                })
+                'headers': {'Content-Type': 'application/json', 'Retry-After': str(WINDOW)},
+                'body': json.dumps({'error': 'Too Many Requests', 'message': 'Slow down.'})
             }
         
         # --- PHASE 4: FORWARD REQUEST ---
-        print("STEP 4: Forwarding request to EC2 Backend...")
+        logger.info(json.dumps({"event": "request_allowed", "ip": user_ip}))
         return forward_request()
 
     except Exception as e:
-        print(f"CRITICAL SYSTEM ERROR: {str(e)}")
+        logger.error(json.dumps({"event": "system_error", "error": str(e)}), exc_info=True)
         return {
             'statusCode': 500,
-            'body': json.dumps(f"Internal Gateway Error: {str(e)}")
+            'body': json.dumps({"error": "Internal Gateway Error", "requestId": context.aws_request_id})
         }
 
-def record_violation(ip, today, now):
-    """Increments violation count. If > MAX_VIOLATIONS, Bans user."""
+# -------------------------------------------------------------------------
+# HELPER FUNCTIONS (Separated for Testability & Readability)
+# -------------------------------------------------------------------------
+
+def is_ip_banned(ip, now):
+    """Checks IPReputationTable for an active ban."""
     try:
-        print(f"RECORDING VIOLATION for {ip}...")
-        
-        # 1. Atomic Increment of violation count
+        response = reputation_table.get_item(Key={'ip_address': ip})
+        if 'Item' in response:
+            item = response['Item']
+            # Check if 'is_banned' is True AND expiry time is in the future
+            if item.get('is_banned') and now < int(item.get('ban_expiry', 0)):
+                return True
+        return False
+    except ClientError as e:
+        logger.error(f"DynamoDB Read Error (Reputation): {e}")
+        return False # Fail Open (Allow traffic if DB breaks)
+
+def increment_request_count(key, now):
+    """Atomically increments the request counter for the current window."""
+    try:
+        response = rate_table.update_item(
+            Key={'client_id': key},
+            UpdateExpression="ADD request_count :inc SET expires_at = :exp",
+            ExpressionAttributeValues={
+                ':inc': 1, 
+                ':exp': now + 60 # TTL: Auto-delete after 60s to save money
+            },
+            ReturnValues="UPDATED_NEW"
+        )
+        # Convert Decimal to int immediately
+        return int(response['Attributes']['request_count'])
+    except ClientError as e:
+        logger.error(f"DynamoDB Write Error (RateLimit): {e}")
+        raise e # Fail Closed (If we can't count, we should probably error out)
+
+def record_violation(ip, today_str, now):
+    """Increments violation count and applies Ban if threshold exceeded."""
+    try:
+        # 1. Atomic Increment
         resp = reputation_table.update_item(
             Key={'ip_address': ip},
             UpdateExpression="SET violation_count = if_not_exists(violation_count, :zero) + :inc, last_violation_date = :today",
             ExpressionAttributeValues={
                 ':inc': 1, 
-                ':zero': 0,
-                ':today': today
+                ':zero': 0, 
+                ':today': today_str
             },
             ReturnValues="UPDATED_NEW"
         )
         
-        new_count = int(resp['Attributes']['violation_count'])
-        print(f"Total Violations for {ip}: {new_count}")
+        new_violation_count = int(resp['Attributes']['violation_count'])
         
-        # 2. Check for Ban Threshold
-        if new_count > MAX_VIOLATIONS:
-            print(f"BAN HAMMER: Banning {ip} for 24 hours.")
+        # 2. Ban Logic
+        if new_violation_count > MAX_VIOLATIONS:
+            logger.warning(f"BANNING IP: {ip} (Violations: {new_violation_count})")
             reputation_table.update_item(
                 Key={'ip_address': ip},
                 UpdateExpression="SET is_banned = :true, ban_expiry = :expiry, violation_count = :zero",
                 ExpressionAttributeValues={
                     ':true': True,
                     ':expiry': now + BAN_DURATION,
-                    ':zero': 0 # Optional: reset count so they start fresh after ban
+                    ':zero': 0 # Reset count on ban
                 }
             )
-    except Exception as e:
-        print(f"Failed to record violation: {e}")
+    except ClientError as e:
+        logger.error(f"Failed to record violation for {ip}: {e}")
 
 def forward_request():
-    """Helper function to call the real API"""
+    """Proxies the request to the backend with explicit timeouts."""
     try:
-        # Create Request
         req = urllib.request.Request(TARGET_API_URL)
-        
-        # Open Connection (This is where TIMEOUTS usually happen)
-        # Set a short timeout (e.g. 5s) so Lambda doesn't hang forever
-        with urllib.request.urlopen(req, timeout=5) as response:
-            data = response.read().decode('utf-8')
-            status = response.getcode()
-            print(f"STEP 4 SUCCESS: Got {status} from backend.")
-            
+        # Timeout is CRITICAL. Without it, Lambda hangs for 30s and you pay for it.
+        # 3.05s is a standard 'wait slightly longer than 3s' timeout.
+        with urllib.request.urlopen(req, timeout=3.05) as response:
             return {
-                'statusCode': status,
-                'body': data,
+                'statusCode': response.getcode(),
+                'body': response.read().decode('utf-8'),
                 'headers': {'Content-Type': 'application/json'}
             }
-            
     except urllib.error.HTTPError as e:
-        # The backend returned a 4xx or 5xx error (e.g. 404 Not Found)
-        print(f"STEP 4 BACKEND ERROR: {e.code}")
-        return {
-            'statusCode': e.code, 
-            'body': e.read().decode('utf-8')
-        }
-        
+        return {'statusCode': e.code, 'body': e.read().decode('utf-8')}
     except urllib.error.URLError as e:
-        # Connection Refused / Timeout / DNS Failure
-        print(f"STEP 4 CONNECTION FAILED: {e.reason}")
-        return {
-            'statusCode': 502, 
-            'body': json.dumps({
-                'error': 'Bad Gateway', 
-                'details': f"Could not connect to backend: {str(e.reason)}"
-            })
-        }
-        
+        logger.error(f"Backend Unreachable: {e.reason}")
+        return {'statusCode': 502, 'body': json.dumps({'error': 'Bad Gateway', 'message': 'Backend unavailable'})}
     except Exception as e:
-        print(f"STEP 4 UNKNOWN ERROR: {e}")
-        return {'statusCode': 500, 'body': str(e)}
+        # Catches timeout errors (socket.timeout)
+        logger.error(f"Backend Timeout/Error: {e}")
+        return {'statusCode': 504, 'body': json.dumps({'error': 'Gateway Timeout', 'message': 'Backend took too long'})}
