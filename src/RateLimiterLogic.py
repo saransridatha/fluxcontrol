@@ -99,7 +99,10 @@ def lambda_handler(event, context):
 # -------------------------------------------------------------------------
 
 def is_ip_banned(ip, now):
-    """Checks IPReputationTable for an active ban."""
+    """
+    Checks the IPReputationTable for an active ban.
+    A user is considered banned if the 'is_banned' flag is true and the current time is before the 'ban_expiry' timestamp.
+    """
     try:
         response = reputation_table.get_item(Key={'ip_address': ip})
         if 'Item' in response:
