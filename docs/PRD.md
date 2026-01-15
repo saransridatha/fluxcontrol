@@ -1,7 +1,7 @@
 # Product Requirements Document: FluxControl
 
 **Project Name:** FluxControl  
-**Version:** 1.2  
+**Version:** 1.0 
 **Date:** January 14, 2026  
 **Status:** In Development  
 
