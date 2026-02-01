@@ -34,7 +34,7 @@ jobs:
           fi
           
           # Install dependencies using the venv's pip
-          venv/bin/pip install -r src/backend/requirements.txt
+          venv/bin/pip install -r src/backend/requirements.txt || exit 1
           
           # --- PHASE 2: RESTART ---
           # Kill old process (Port 8080)
