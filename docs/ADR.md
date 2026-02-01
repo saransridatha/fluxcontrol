@@ -126,3 +126,20 @@ We implemented a **CI/CD pipeline using GitHub Actions**.
 * **Positive:** The process is now consistent and repeatable.
 * **Positive:** We can now track the history of deployments in the GitHub Actions tab.
 * **Negative:** The deployment process is now dependent on GitHub Actions. If GitHub Actions is down, we cannot deploy.
+
+---
+
+## ADR 008: Dual Deployment Pipeline for Lambda and EC2
+#### Author: Saran Sri Datha
+
+### Context
+The project has two main components: the AWS Lambda functions for rate limiting and administration, and the FastAPI backend running on an EC2 instance. The existing CI/CD pipeline only handled the deployment of the Lambda functions. The EC2 backend was deployed manually or using `systemd` on the server itself, but the code was not automatically updated from the repository.
+
+### Decision
+We decided to create a separate GitHub Actions workflow for the EC2 backend. This workflow is triggered on pushes to `main` where the backend code (`src/backend/main.py`) has changed. It uses `ssh-action` to connect to the EC2 instance, pull the latest code, install dependencies, and restart the server.
+
+### Consequences
+* **Positive:** The EC2 backend is now automatically deployed, ensuring that the running code is always in sync with the `main` branch.
+* **Positive:** The deployment process is now automated and repeatable for both components.
+* **Positive:** We have a clear separation of concerns in our deployment pipelines. The Lambda deployment is triggered by changes in the `src/lambda` directory, and the EC2 deployment is triggered by changes in `src/backend`.
+* **Negative:** We now have two separate deployment workflows to maintain.

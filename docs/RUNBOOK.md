@@ -40,6 +40,12 @@ We need two tables in the **ap-northeast-1** (Tokyo) region.
 
 ## 3. Backend Deployment (EC2)
 
+***
+
+**NOTE:** The deployment of the EC2 backend code is now automated through a CI/CD pipeline using GitHub Actions. Any push to the `main` branch with changes in the `src/backend` directory will automatically deploy the new code to the EC2 instance. The steps below are for the **initial setup** of a new EC2 instance and are preserved for reference.
+
+***
+
 ### Step 3.1: Launch Instance
 1.  **OS:** Ubuntu 24.04 LTS or Amazon Linux 2023.
 2.  **Instance Type:** t2.micro (Free Tier).
@@ -56,20 +62,23 @@ We need two tables in the **ap-northeast-1** (Tokyo) region.
     * **Source:** `172.31.0.0/16` (Allows internal VPC traffic).
     * **Type:** SSH (22) -> Source: My IP / Anywhere IPv4. (For management)
 
-### Step 3.3: Deploy Code & Service
+### Step 3.3: Initial Code Setup & Service Configuration
 SSH into the instance and run:
 
 ```bash
 # 1. Install Dependencies
-sudo apt update && sudo apt install python3-pip -y
-pip3 install fastapi uvicorn
+sudo apt update && sudo apt install python3-pip git -y
 
-# 2. Create Project
-mkdir fluxcontrol && cd fluxcontrol
-nano main.py 
-# (Paste the FastAPI code here)
+# 2. Clone the repository
+git clone https://github.com/saransridatha/fluxcontrol.git
+cd fluxcontrol
 
-# 3. Create Systemd Service (For auto-restart)
+# 3. Install Python dependencies
+pip3 install -r src/backend/requirements.txt
+
+# 4. Create Systemd Service (For auto-restart)
+# The backend service must implement a /health endpoint for the adaptive rate limiting to work.
+# See src/backend/main.py for an example.
 sudo nano /etc/systemd/system/fluxapi.service
 # Paste into fluxapi.service:
 
@@ -82,7 +91,7 @@ After=network.target
 [Service]
 User=ubuntu
 WorkingDirectory=/home/ubuntu/fluxcontrol
-ExecStart=/usr/bin/python3 -m uvicorn main:app --host 0.0.0.0 --port 8000
+ExecStart=/usr/bin/python3 -m uvicorn src.backend.main:app --host 0.0.0.0 --port 8000
 Restart=always
 RestartSec=3
 
@@ -100,44 +109,48 @@ sudo systemctl start fluxapi
 
 ***
 
-**NOTE:** The deployment of the Lambda functions is now automated through a CI/CD pipeline using GitHub Actions. Any push to the `main` branch with changes in the `src` directory will automatically deploy the functions. The steps below are for manual deployment and are preserved for reference or emergency use.
+**NOTE:** The deployment of the Lambda functions is now automated through a CI/CD pipeline using GitHub Actions. Any push to the `main` branch with changes in the `src/lambda` directory will automatically deploy the functions. The steps below are for manual deployment and are preserved for reference or emergency use.
 
 ***
 ### Step 4.1: RateLimiterLogic 
-Create Function: `RateLimiterLogic` (Python 3.12).
+Create a new Lambda function with the following settings:
+*   **Function Name:** `RateLimiterLogic`
+*   **Runtime:** Python 3.12
 
 **Permissions (IAM Role):**
-
-Attach `AmazonDynamoDBFullAccess`.
-
-Attach `AWSLambdaVPCAccessExecutionRole` (Crucial for VPC support).
+Create a new role with the following policies:
+*   `AmazonDynamoDBFullAccess`
+*   `AWSLambdaVPCAccessExecutionRole` (Crucial for VPC support)
 
 **Network Configuration (VPC):**
-
-VPC: Select Default VPC.
-
-Subnets: Select 2 private subnets.
-
-Security Group: Select Default SG.
-
-**Environment Variables:**
-
-`TABLE_NAME = RateLimitTable`
-
-`TARGET_API_URL = http://172.31.X.X:8000/` (Use EC2 Private IP).
+*   **VPC:** Select your Default VPC.
+*   **Subnets:** Select at least two private subnets.
+*   **Security Group:** Select the Default Security Group.
 
 **General Configuration:**
+*   **Timeout:** Increase to `15` seconds.
 
-Timeout: Increase to 15 seconds.
+**CRITICAL: Update Backend IP Address**
+Before deploying, the private IP address of your EC2 backend **must be hardcoded** into the source code.
 
-Code: Paste the final `lambda_handler` code.
+1.  Open `src/lambda/RateLimiterLogic.py`.
+2.  Find the line `TARGET_IP = "http://172.31.34.253:8000"`.
+3.  Replace the IP address with the private IP of your EC2 instance.
+
+**Code:**
+*   Create a deployment package by zipping the contents of `src/lambda`. Make sure to include the `requests` library.
+*   Upload the zip file as the function's code.
 
 ### Step 4.2: fluxcontrolAdmin 
-Create Function: `fluxcontrolAdmin` (Python 3.12).
+Create a new Lambda function with the following settings:
+*   **Function Name:** `fluxcontrolAdmin`
+*   **Runtime:** Python 3.12
 
-**Permissions:** Attach `AmazonDynamoDBFullAccess`.
+**Permissions (IAM Role):**
+Create a new role with the `AmazonDynamoDBFullAccess` policy.
 
-**Code:** Paste the Admin API code.
+**Code:**
+*   Zip the `src/lambda/fluxcontrolAdmin.py` file and upload it as the function's code.
 
 ## 5. API Gateway Setup
 ### Step 5.1: Create API

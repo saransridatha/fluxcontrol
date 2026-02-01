@@ -1,6 +1,6 @@
 # FluxControl: Serverless API Rate Limiter
 
-[![Status](https://img.shields.io/badge/Status-Active-success)](https://github.com/saransridatha/fluxcontrol) [![Deploy to AWS Lambda](https://github.com/saransridatha/fluxcontrol/actions/workflows/deploy.yml/badge.svg)](https://github.com/saransridatha/fluxcontrol/actions/workflows/deploy.yml) [![Technology](https://img.shields.io/badge/AWS-Serverless-orange)](https://aws.amazon.com/serverless/) [![Language](https://img.shields.io/badge/Python-3.12-blue)](https://www.python.org/) [![License](https://img.shields.io/badge/License-MIT-green)](LICENSE)
+[![Status](https://img.shields.io/badge/Status-Active-success)](https://github.com/saransridatha/fluxcontrol) [![Deploy Lambda](https://github.com/saransridatha/fluxcontrol/actions/workflows/deploy.yml/badge.svg)](https://github.com/saransridatha/fluxcontrol/actions/workflows/deploy.yml) [![Deploy Backend](https://github.com/saransridatha/fluxcontrol/actions/workflows/deploy-backend.yml/badge.svg)](https://github.com/saransridatha/fluxcontrol/actions/workflows/deploy-backend.yml) [![Technology](https://img.shields.io/badge/AWS-Serverless-orange)](https://aws.amazon.com/serverless/) [![Language](https://img.shields.io/badge/Python-3.12-blue)](https://www.python.org/) [![License](https://img.shields.io/badge/License-MIT-green)](LICENSE)
 
 FluxControl is a cloud-native security middleware designed to protect backend APIs from abusive traffic. Built on AWS Serverless architecture, it provides low-latency traffic shaping, distributed atomic counting, and automated IP reputation management.
 
@@ -52,6 +52,8 @@ The system tracks violations to identify and block consistently abusive clients.
 
 ## API Usage
 
+For detailed information on the API endpoints, request/response formats, and advanced features like Shield Mode, please see the [API Documentation](docs/API.md).
+
 ### 1. Protected Proxy Endpoint
 Proxies requests to the backend service if the rate limit is not exceeded.
 ```bash
@@ -80,15 +82,27 @@ curl -X POST https://{api_id}.execute-api.ap-northeast-1.amazonaws.com/dev/admin
 fluxcontrol/
 ├── .github/
 │   └── workflows/
+│       ├── deploy-backend.yml
 │       └── deploy.yml
 ├── docs/
 │   ├── ADR.md
 │   ├── PRD.md
 │   ├── RFC.md
 │   └── RUNBOOK.md
+├── experiments/
+│   ├── clients/
+│   │   ├── adaptive_monitor.js
+│   │   └── smart_client.js
+│   └── infrastructure/
+│       └── burn_cpu.py
 ├── src/
-│   ├── fluxcontrolAdmin.py
-│   └── RateLimiterLogic.py
+│   ├── backend/
+│   │   ├── main.py
+│   │   └── requirements.txt
+│   └── lambda/
+│       ├── fluxcontrolAdmin.py
+│       ├── RateLimiterLogic.py
+│       └── requirements.txt
 ├── LICENSE
 └── README.md
 ```
@@ -98,24 +112,28 @@ fluxcontrol/
 ## CI/CD
 
 This project uses GitHub Actions for continuous integration and continuous deployment.
+
+### Lambda Deployment
 The workflow is defined in `.github/workflows/deploy.yml`.
 
-On every push to the `main` branch that includes changes in the `src` directory, the workflow will automatically deploy the AWS Lambda functions.
-
-The workflow performs the following steps:
-1. Checks out the code.
-2. Sets up Python 3.9.
-3. Installs the `zip` tool.
-4. Packages `RateLimiterLogic.py` into `lambda_function.zip`.
-5. Deploys `RateLimiterLogic` to AWS Lambda.
-6. Packages `fluxcontrolAdmin.py` into `lambda_function.zip`.
-7. Deploys `fluxcontrolAdmin` to AWS Lambda.
+On every push to the `main` branch that includes changes in the `src/lambda` directory, the workflow will automatically deploy the AWS Lambda functions.
 
 The deployment requires the following secrets to be configured in the GitHub repository:
 - `AWS_ACCESS_KEY_ID`
 - `AWS_SECRET_ACCESS_KEY`
 - `AWS_REGION`
+
+### EC2 Backend Deployment
+The workflow is defined in `.github/workflows/deploy-backend.yml`.
+
+On every push to the `main` branch that includes changes in the `src/backend` directory, the workflow will automatically deploy the EC2 backend.
+
+The deployment requires the following secrets to be configured in the GitHub repository:
+- `EC2_HOST`
+- `EC2_SSH_KEY`
 ---
 
 ## License
 This project is licensed under the MIT License - see the `LICENSE` file for details.
+
+

@@ -4,7 +4,7 @@
 | :--- | :--- |
 | **Title** | FluxControl: Scalable Serverless Rate Limiting System |
 | **Authors** | Saran Sri Datha Madhipati, Parijat Pal, Sumit Joshi |
-| **Status** | Implementation Phase |
+| **Status** | Active Development |
 | **Date** | January 14, 2026 |
 | **Version** | 1.0 |
 
@@ -14,7 +14,7 @@ This document proposes the technical design for **FluxControl**, a middleware so
 
 ## 2. Motivation
 
-Our current backend infrastructure is hosted on a standalone EC2 instance. It handles requests synchronously and lacks an inherent queuing or filtering mechanism. This makes the application trivial to crash using simple flooding scripts or the `httpTest` tool.
+Our current backend infrastructure is hosted on a standalone EC2 instance. It handles requests synchronously and lacks an inherent queuing or filtering mechanism. This makes the application trivial to crash using simple flooding scripts the `adaptive_monitor.js` and `smart_client.js` scripts in the `experiments` directory.
 
 We require a solution that:
 1.  **Decouples Security from Logic:** The backend developers should not write security code inside the business API.
@@ -33,7 +33,7 @@ The system follows the **"VPC-Walled Garden"** pattern to ensure maximum securit
 2.  **Processing:** The request is passed to the **RateLimiterLogic Lambda**. This function resides inside a private VPC Subnet.
 3.  **State Check:** The Lambda communicates with **Amazon DynamoDB** via a VPC Gateway Endpoint (avoiding public internet traversal) to check the user's current usage count.
 4.  **Routing:**
-    * If allowed, the Lambda proxies the request to the **EC2 Backend** using its Private IPv4 address.
+    * If allowed, the Lambda proxies the request to the **EC2 Backend** using its Private IPv4 address. The backend is a FastAPI application that is automatically deployed via a separate CI/CD pipeline.
     * If blocked, the Lambda returns a `429` status code immediately.
 
 ### 3.2. Network Security
@@ -72,7 +72,7 @@ Stores the long-term history of offenders.
 ## 5. Algorithmic Implementation
 
 ### 5.1. The Race Condition Problem
-In a distributed system, a standard "Read-Increment-Write" logic fails under load (e.g., during an `httpTest` flood). Two requests reading `count=4` simultaneously will both write `count=5`, allowing 6 requests through.
+In a distributed system, a standard "Read-Increment-Write" logic fails under load (e.g., during a flood from the `adaptive_monitor.js` script). Two requests reading `count=4` simultaneously will both write `count=5`, allowing 6 requests through.
 
 ### 5.2. The Atomic Solution
 We utilize DynamoDB's `UpdateItem` API with the `ADD` expression.

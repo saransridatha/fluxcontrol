@@ -1,0 +1,42 @@
+name: Deploy Backend to EC2
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - 'src/backend/main.py'  # Only trigger if the backend code changes
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v2
+
+    - name: Deploy via SSH
+      uses: appleboy/ssh-action@master
+      with:
+        host: ${{ secrets.EC2_HOST }}        # Your EC2 IP (e.g., 13.233.x.x)
+        username: ubuntu
+        key: ${{ secrets.EC2_SSH_KEY }}      # Your .pem key content
+        script: |
+          # --- PHASE 1: UPDATE ---
+          cd ~/fluxcontrol
+          git pull origin main
+          
+          # Install dependencies (Path relative to root is correct here)
+          pip3 install -r src/backend/requirements.txt || true
+          
+          # --- PHASE 2: RESTART ---
+          # Kill old process (Port 8080)
+          fuser -k -9 8080/tcp || true
+          
+          # CRITICAL CHANGE: Move into the backend folder first
+          cd src/backend
+          
+          # Now we can just run "main:app" directly. 
+          # This guarantees Python finds the file.
+          nohup uvicorn main:app --host 0.0.0.0 --port 8080 > ../../backend.log 2>&1 &
+          
+          # Verify
+          sleep 3
+          pgrep -a uvicorn

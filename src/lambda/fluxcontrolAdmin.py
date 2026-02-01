@@ -4,7 +4,6 @@ import time
 import os
 from decimal import Decimal
 
-# RESOURCES
 dynamodb = boto3.resource('dynamodb')
 rep_table = dynamodb.Table('IPReputationTable')
 config_table = dynamodb.Table('FluxConfig')
@@ -24,11 +23,9 @@ def lambda_handler(event, context):
     }
 
     try:
-        # 1. HANDLE OPTIONS (CORS Preflight)
         if event['httpMethod'] == 'OPTIONS':
             return {'statusCode': 200, 'headers': headers, 'body': ''}
 
-        # 2. GET (List Users) - NO AUTH CHECK
         if event['httpMethod'] == 'GET':
             try:
                 response = rep_table.scan()
@@ -43,7 +40,6 @@ def lambda_handler(event, context):
                 print(f"DB Error: {e}")
                 return {'statusCode': 500, 'headers': headers, 'body': json.dumps({'error': str(e)})}
 
-        # 3. POST (Actions) - NO AUTH CHECK
         if event['httpMethod'] == 'POST':
             body = json.loads(event.get('body', '{}'))
             action = body.get('action')
@@ -78,7 +74,6 @@ def lambda_handler(event, context):
                 )
                 msg = f"User {ip} is in SEAMLESS MODE."
 
-            # ACTION: REVOKE VIP (New)
             elif action == 'unseamless':
                 ip = body.get('ip')
                 rep_table.update_item(

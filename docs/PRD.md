@@ -66,13 +66,17 @@ We propose a **Serverless Token Bucket variant** running on AWS Lambda. The syst
 
 ## 7. Testing Strategy
 
-Testing will be conducted primarily using the **httpTest** tool developed in-house.
+Testing is conducted using a suite of custom client scripts located in the `experiments/clients` directory. These scripts are designed to validate the core features of the rate limiter.
 
-* **Tool Source:** [https://github.com/saransridatha/httpTest](https://github.com/saransridatha/httpTest)
-* **Scope:**
-    1.  **Functional Testing:** Verifying that the 6th request in a 10-second window fails.
-    2.  **Concurrency Testing:** Simulating 50+ concurrent threads to ensure the database counters do not drift.
-    3.  **End-to-End Testing:** Verifying that a valid request successfully retrieves data from the EC2 backend via the private network.
+*   **`adaptive_monitor.js`**: This script continuously sends bursts of requests to the API to verify the **adaptive rate limiting** feature. By observing the number of successful requests in a window, it can determine if the backend is under high CPU load and has lowered the rate limit threshold.
+
+*   **`smart_client.js`**: This script is designed to test the **Shield Mode**. It first makes a request to the API. If it receives a `401 Unauthorized` response with a proof-of-work challenge, it solves the puzzle and retries the request with the solution in the header, verifying that access is then granted.
+
+*   **Scope:**
+    1.  **Functional Testing:** Verifying that requests exceeding the rate limit are blocked with a `429` status code.
+    2.  **Adaptive Throttling:** Verifying that the rate limit is lowered when the backend CPU is high.
+    3.  **Shield Mode:** Verifying the proof-of-work challenge and solution mechanism.
+    4.  **End-to-End Testing:** Verifying that a valid request successfully retrieves data from the EC2 backend via the private network.
 
 ## 8. Future Scope
 

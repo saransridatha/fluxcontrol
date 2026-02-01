@@ -6,36 +6,30 @@ import hashlib
 import requests
 from botocore.exceptions import ClientError
 
-# --- RESOURCES ---
-# Hardcoded region to be safe
 dynamodb = boto3.resource('dynamodb', region_name='ap-northeast-1')
 rate_table = dynamodb.Table('RateLimitTable')
 config_table = dynamodb.Table('FluxConfig')
 reputation_table = dynamodb.Table('IPReputationTable')
 
-# --- CONFIG (HARDCODED FOR SAFETY) ---
 TARGET_IP = "http://172.31.34.253:8000"
 
 def lambda_handler(event, context):
     print(f"DEBUG: Lambda Started. Target: {TARGET_IP}")
     
     try:
-        # 1. PARSE REQUEST
         request_context = event.get('requestContext', {})
         ip = request_context.get('identity', {}).get('sourceIp', '0.0.0.0')
         print(f"DEBUG: Processing IP: {ip}")
 
-        # 2. CHECK BAN STATUS
         try:
             user_record = reputation_table.get_item(Key={'ip_address': ip}).get('Item', {})
             if user_record.get('is_banned'):
                 if int(time.time()) < int(user_record.get('ban_expiry', 0)):
-                    print(f"🚫 BLOCKED BANNED USER: {ip}")
+                    print(f"BLOCKED BANNED USER: {ip}")
                     return response(403, {'error': 'Access Denied', 'message': 'You are banned.'})
         except Exception as e:
             print(f"DEBUG: Ban Check Failed: {e}")
 
-        # 3. FETCH CONFIG
         try:
             config_item = config_table.get_item(Key={'config_key': 'global'})['Item']
             mode = config_item.get('mode', 'normal')
@@ -48,7 +42,6 @@ def lambda_handler(event, context):
             difficulty = 4
             cpu_threshold = 80
 
-        # 4. SHIELD MODE
         if mode == 'shield':
             headers = event.get('headers') or {}
             solution = headers.get('x-puzzle-solution', '') or headers.get('X-Puzzle-Solution', '')
@@ -57,8 +50,7 @@ def lambda_handler(event, context):
             prefix = "0" * difficulty
             
             if not hashed.startswith(prefix):
-                print(f"🛡️ SHIELD BLOCK: {ip}")
-                # Log to dashboard
+                print(f"SHIELD BLOCK: {ip}")
                 update_dashboard(ip, is_violation=False)
                 return response(401, {
                     'error': 'Shield Active. Solve Puzzle.', 
@@ -66,22 +58,19 @@ def lambda_handler(event, context):
                     'difficulty': difficulty
                 })
 
-        # 5. HEALTH CHECK & LIMIT
         current_limit = 5
         try:
-            # Short timeout to prevent hanging
             health_resp = requests.get(f"{TARGET_IP}/health", timeout=0.5)
             server_cpu = health_resp.json().get('cpu', 0)
             print(f"DEBUG: Server CPU: {server_cpu}%")
             
             if server_cpu > cpu_threshold:
-                print("⚠️ HIGH LOAD. Throttling.")
+                print("HIGH LOAD. Throttling.")
                 current_limit = 2
         except Exception as e:
             print(f"DEBUG: Health Check Skipped: {e}")
             current_limit = 2
 
-        # 6. ATOMIC COUNTER
         now = int(time.time())
         window_key = f"{ip}-{int(now // 10) * 10}"
         
@@ -99,7 +88,6 @@ def lambda_handler(event, context):
             update_dashboard(ip, is_violation=True)
             return response(429, {'error': 'Too Many Requests', 'limit': current_limit})
 
-        # 7. SUCCESS FORWARD
         if count == 1:
             update_dashboard(ip, is_violation=False)
 
@@ -115,11 +103,9 @@ def lambda_handler(event, context):
 
     except Exception as e:
         print(f"CRITICAL EXCEPTION: {str(e)}")
-        # Return a valid JSON error so API Gateway doesn't explode
         return response(500, {'error': 'Internal Logic Error', 'details': str(e)})
 
 def response(code, body_dict):
-    """Helper to ensure API Gateway always gets the format it wants"""
     return {
         'statusCode': code,
         'body': json.dumps(body_dict),
