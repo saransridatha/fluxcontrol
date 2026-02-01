@@ -39,7 +39,7 @@ jobs:
     # COMPLEX BUILD: RateLimiter needs 'requests' lib
     - name: Package RateLimiter (FluxProxy)
       run: |
-        cd src
+        cd src/lambda
         mkdir build_layer
         # 1. Install dependencies into temp folder
         pip install -r requirements.txt -t build_layer/
@@ -47,7 +47,7 @@ jobs:
         cp RateLimiterLogic.py build_layer/
         # 3. Zip the CONTENTS of the folder (not the folder itself)
         cd build_layer
-        zip -r ../rate_limiter.zip .
+        zip -r ../../rate_limiter.zip .
         cd ..
         # Cleanup
         rm -rf build_layer
@@ -55,8 +55,8 @@ jobs:
     # SIMPLE BUILD: Admin only needs boto3 (Built-in to AWS)
     - name: Package Admin
       run: |
-        cd src
-        zip admin.zip fluxcontrolAdmin.py
+        cd src/lambda
+        zip ../admin.zip fluxcontrolAdmin.py
 
     # --- STEP 3: DEPLOY ---
     - name: Deploy RateLimiterLogic
