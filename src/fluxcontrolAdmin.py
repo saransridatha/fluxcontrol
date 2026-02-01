@@ -3,16 +3,14 @@ import json
 import time
 import os
 from decimal import Decimal
-from boto3.dynamodb.conditions import Key
 
 # RESOURCES
 dynamodb = boto3.resource('dynamodb')
-table = dynamodb.Table('IPReputationTable')
+rep_table = dynamodb.Table('IPReputationTable')
+config_table = dynamodb.Table('FluxConfig')
+ADMIN_SECRET = os.environ.get('ADMIN_SECRET', 'FluxRulez2026!')
 
-# CONFIG
-ADMIN_SECRET = os.environ.get('ADMIN_SECRET', 'my-super-secret-password')
-
-# HELPER: Fixes "Object of type Decimal is not JSON serializable" error
+# HELPER
 class DecimalEncoder(json.JSONEncoder):
     def default(self, obj):
         if isinstance(obj, Decimal):
@@ -28,83 +26,75 @@ def lambda_handler(event, context):
     }
 
     try:
-        # 1. SECURITY CHECK (The Guard)
-        # We check for a header "X-Admin-Secret"
-        request_headers = event.get('headers') or {}
-        # Handle case-insensitive headers (APIGW sometimes lowercases them)
-        client_secret = request_headers.get('X-Admin-Secret') or request_headers.get('x-admin-secret')
+        # 1. SECURITY CHECK
+        req_headers = event.get('headers') or {}
+        client_secret = req_headers.get('X-Admin-Secret') or req_headers.get('x-admin-secret')
         
         if event['httpMethod'] != 'OPTIONS' and client_secret != ADMIN_SECRET:
-            print(f"Unauthorized access attempt. Token provided: {client_secret}")
-            return {
-                'statusCode': 401,
-                'headers': headers,
-                'body': json.dumps({'error': 'Unauthorized. Missing or invalid X-Admin-Secret header.'})
-            }
+            return {'statusCode': 401, 'headers': headers, 'body': json.dumps({'error': 'Unauthorized'})}
 
         if event['httpMethod'] == 'OPTIONS':
             return {'statusCode': 200, 'headers': headers, 'body': ''}
 
-        # 2. GET /admin -> List Users
+        # 2. GET (List Users)
         if event['httpMethod'] == 'GET':
-            # Scan returns everything. 
-            response = table.scan()
+            response = rep_table.scan()
             items = response.get('Items', [])
-            # Sort by violation count (highest first) to make it useful
             items.sort(key=lambda x: x.get('violation_count', 0), reverse=True)
-            
-            return {
-                'statusCode': 200,
-                'headers': headers,
-                'body': json.dumps(items, cls=DecimalEncoder)
-            }
+            return {'statusCode': 200, 'headers': headers, 'body': json.dumps(items, cls=DecimalEncoder)}
 
-        # 3. POST /admin -> Action
+        # 3. POST (Actions)
         if event['httpMethod'] == 'POST':
             body = json.loads(event.get('body', '{}'))
-            ip = body.get('ip')
             action = body.get('action')
 
-            if not ip or not action:
-                return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Missing IP or Action'})}
-
+            # ACTION: BAN
             if action == 'ban':
-                expiry = int(time.time()) + 86400 # 24h
-                table.update_item(
+                ip = body.get('ip')
+                expiry = int(time.time()) + 86400
+                rep_table.update_item(
                     Key={'ip_address': ip},
                     UpdateExpression="SET is_banned = :t, ban_expiry = :e, violation_count = :max",
-                    ExpressionAttributeValues={
-                        ':t': True,
-                        ':e': expiry,
-                        ':max': 999 # Max it out so they look "bad" in the UI
-                    }
+                    ExpressionAttributeValues={':t': True, ':e': expiry, ':max': 999}
                 )
-                msg = f"User {ip} has been BANNED."
+                msg = f"User {ip} BANNED."
 
+            # ACTION: UNBAN
             elif action == 'unban':
-                table.update_item(
+                ip = body.get('ip')
+                rep_table.update_item(
                     Key={'ip_address': ip},
                     UpdateExpression="SET is_banned = :f, violation_count = :zero",
-                    ExpressionAttributeValues={
-                        ':f': False,
-                        ':zero': 0
-                    }
+                    ExpressionAttributeValues={':f': False, ':zero': 0}
                 )
-                msg = f"User {ip} has been UNBANNED."
-            
-            else:
-                return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Invalid action'})}
+                msg = f"User {ip} UNBANNED."
 
-            return {
-                'statusCode': 200,
-                'headers': headers,
-                'body': json.dumps({'message': msg, 'ip': ip, 'status': action})
-            }
+            # ACTION: SEAMLESS (VIP)
+            elif action == 'seamless':
+                ip = body.get('ip')
+                expiry = int(time.time()) + 86400
+                rep_table.update_item(
+                    Key={'ip_address': ip},
+                    UpdateExpression="SET is_seamless = :t, seamless_expiry = :e, is_banned = :f, violation_count = :zero",
+                    ExpressionAttributeValues={':t': True, ':e': expiry, ':f': False, ':zero': 0}
+                )
+                msg = f"User {ip} is in SEAMLESS MODE."
+            
+            # ACTION: CONFIG (Toggle Shield)
+            elif action == 'config':
+                mode = body.get('mode') # 'normal' or 'shield'
+                config_table.put_item(Item={
+                    'config_key': 'global',
+                    'mode': mode,
+                    'difficulty': 4,
+                    'cpu_threshold': 80
+                })
+                msg = f"System Mode set to: {mode}"
+
+            else:
+                return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Invalid Action'})}
+
+            return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'message': msg})}
 
     except Exception as e:
-        print(f"Server Error: {str(e)}")
-        return {
-            'statusCode': 500,
-            'headers': headers,
-            'body': json.dumps({'error': str(e)})
-        }
+        return {'statusCode': 500, 'headers': headers, 'body': json.dumps({'error': str(e)})}
