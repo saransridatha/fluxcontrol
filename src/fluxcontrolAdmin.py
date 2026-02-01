@@ -77,7 +77,17 @@ def lambda_handler(event, context):
                     ExpressionAttributeValues={':t': True, ':e': expiry, ':f': False, ':zero': 0}
                 )
                 msg = f"User {ip} is in SEAMLESS MODE."
-            
+
+            # ACTION: REVOKE VIP (New)
+            elif action == 'unseamless':
+                ip = body.get('ip')
+                rep_table.update_item(
+                    Key={'ip_address': ip},
+                    UpdateExpression="SET is_seamless = :f",
+                    ExpressionAttributeValues={':f': False}
+                )
+                msg = f"User {ip} VIP status REVOKED."
+
             elif action == 'config':
                 mode = body.get('mode')
                 config_table.put_item(Item={
