@@ -19,23 +19,34 @@ jobs:
         username: ubuntu
         key: ${{ secrets.EC2_SSH_KEY }}      # Your .pem key content
         script: |
-          # --- PHASE 1: UPDATE ---
+          # --- PHASE 1: SETUP & UPDATE ---
           cd ~/fluxcontrol
-          git pull origin main
           
-          # Install dependencies (Path relative to root is correct here)
-          pip3 install -r src/backend/requirements.txt || true
+          # Verify it's a git repo before pulling
+          if [ ! -d .git ]; then
+            echo "Error: Not a git repository. Please clone the repo first."
+            exit 1
+          fi
+          git pull origin main
+
+          # Create a virtual environment if it doesn't exist
+          if [ ! -d "venv" ]; then
+            python3 -m venv venv
+          fi
+          
+          # Activate virtual environment and install dependencies
+          source venv/bin/activate
+          pip install -r src/backend/requirements.txt
           
           # --- PHASE 2: RESTART ---
           # Kill old process (Port 8080)
-          fuser -k -9 8080/tcp || true
+          fuser -k -n tcp 8080 || true
           
-          # CRITICAL CHANGE: Move into the backend folder first
+          # Move into the backend folder
           cd src/backend
           
-          # Now we can just run "main:app" directly. 
-          # This guarantees Python finds the file.
-          nohup uvicorn main:app --host 0.0.0.0 --port 8080 > ../../backend.log 2>&1 &
+          # Run the app with the venv python, log inside the project dir
+          nohup ../../venv/bin/uvicorn main:app --host 0.0.0.0 --port 8080 > ../../backend.log 2>&1 &
           
           # Verify
           sleep 3
