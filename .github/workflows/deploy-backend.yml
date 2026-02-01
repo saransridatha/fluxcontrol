@@ -17,6 +17,7 @@ jobs:
         username: ubuntu
         key: ${{ secrets.EC2_SSH_KEY }}      # Your .pem key content
         script: |
+          set -x # Enable debugging
           # --- PHASE 1: SETUP & UPDATE ---
           cd ~/fluxcontrol
           
@@ -25,7 +26,7 @@ jobs:
             echo "Error: Not a git repository. Please clone the repo first."
             exit 1
           fi
-          git pull origin main
+          git pull origin main || true
 
           # Create a virtual environment if it doesn't exist
           if [ ! -d "venv" ]; then
