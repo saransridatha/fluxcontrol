@@ -16,4 +16,6 @@ jobs:
         host: ${{ secrets.EC2_HOST }}        # Your EC2 IP (e.g., 13.233.x.x)
         username: ubuntu
         key: ${{ secrets.EC2_SSH_KEY }}      # Your .pem key content
-        script_path: .github/scripts/deploy-backend.sh
+        script: |
+          chmod +x .github/scripts/deploy-backend.sh
+          .github/scripts/deploy-backend.sh
