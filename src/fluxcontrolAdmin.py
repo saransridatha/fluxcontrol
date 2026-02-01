@@ -8,9 +8,7 @@ from decimal import Decimal
 dynamodb = boto3.resource('dynamodb')
 rep_table = dynamodb.Table('IPReputationTable')
 config_table = dynamodb.Table('FluxConfig')
-ADMIN_SECRET = os.environ.get('ADMIN_SECRET', 'FluxRulez2026!')
 
-# HELPER
 class DecimalEncoder(json.JSONEncoder):
     def default(self, obj):
         if isinstance(obj, Decimal):
@@ -22,33 +20,35 @@ def lambda_handler(event, context):
         'Content-Type': 'application/json',
         'Access-Control-Allow-Origin': '*',
         'Access-Control-Allow-Methods': 'OPTIONS,POST,GET',
-        'Access-Control-Allow-Headers': 'Content-Type,X-Admin-Secret'
+        'Access-Control-Allow-Headers': 'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'
     }
 
     try:
-        # 1. SECURITY CHECK
-        req_headers = event.get('headers') or {}
-        client_secret = req_headers.get('X-Admin-Secret') or req_headers.get('x-admin-secret')
-        
-        if event['httpMethod'] != 'OPTIONS' and client_secret != ADMIN_SECRET:
-            return {'statusCode': 401, 'headers': headers, 'body': json.dumps({'error': 'Unauthorized'})}
-
+        # 1. HANDLE OPTIONS (CORS Preflight)
         if event['httpMethod'] == 'OPTIONS':
             return {'statusCode': 200, 'headers': headers, 'body': ''}
 
-        # 2. GET (List Users)
+        # 2. GET (List Users) - NO AUTH CHECK
         if event['httpMethod'] == 'GET':
-            response = rep_table.scan()
-            items = response.get('Items', [])
-            items.sort(key=lambda x: x.get('violation_count', 0), reverse=True)
-            return {'statusCode': 200, 'headers': headers, 'body': json.dumps(items, cls=DecimalEncoder)}
+            try:
+                response = rep_table.scan()
+                items = response.get('Items', [])
+                items.sort(key=lambda x: x.get('violation_count', 0), reverse=True)
+                return {
+                    'statusCode': 200, 
+                    'headers': headers, 
+                    'body': json.dumps(items, cls=DecimalEncoder)
+                }
+            except Exception as e:
+                print(f"DB Error: {e}")
+                return {'statusCode': 500, 'headers': headers, 'body': json.dumps({'error': str(e)})}
 
-        # 3. POST (Actions)
+        # 3. POST (Actions) - NO AUTH CHECK
         if event['httpMethod'] == 'POST':
             body = json.loads(event.get('body', '{}'))
             action = body.get('action')
+            msg = "Action completed"
 
-            # ACTION: BAN
             if action == 'ban':
                 ip = body.get('ip')
                 expiry = int(time.time()) + 86400
@@ -59,7 +59,6 @@ def lambda_handler(event, context):
                 )
                 msg = f"User {ip} BANNED."
 
-            # ACTION: UNBAN
             elif action == 'unban':
                 ip = body.get('ip')
                 rep_table.update_item(
@@ -69,7 +68,6 @@ def lambda_handler(event, context):
                 )
                 msg = f"User {ip} UNBANNED."
 
-            # ACTION: SEAMLESS (VIP)
             elif action == 'seamless':
                 ip = body.get('ip')
                 expiry = int(time.time()) + 86400
@@ -80,9 +78,8 @@ def lambda_handler(event, context):
                 )
                 msg = f"User {ip} is in SEAMLESS MODE."
             
-            # ACTION: CONFIG (Toggle Shield)
             elif action == 'config':
-                mode = body.get('mode') # 'normal' or 'shield'
+                mode = body.get('mode')
                 config_table.put_item(Item={
                     'config_key': 'global',
                     'mode': mode,
@@ -90,9 +87,6 @@ def lambda_handler(event, context):
                     'cpu_threshold': 80
                 })
                 msg = f"System Mode set to: {mode}"
-
-            else:
-                return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Invalid Action'})}
 
             return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'message': msg})}
 
