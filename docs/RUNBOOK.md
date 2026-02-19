@@ -1,6 +1,6 @@
 # RUNBOOK: FluxControl System Setup & Recovery
 
-**System:** FluxControl Rate Limiter    
+**System:** FluxControl Rate Limiter
 **Last Updated:** January 14, 2026
 
 ---
@@ -15,7 +15,7 @@
 ## 2. Infrastructure Setup (Database & Network)
 
 ### Step 2.1: Create DynamoDB Tables
-We need two tables in the **ap-northeast-1** (Tokyo) region.
+We need three tables in the **ap-northeast-1** (Tokyo) region.
 
 1.  **Table 1: RateLimitTable**
     * **Partition Key:** `client_id` (String)
@@ -24,6 +24,10 @@ We need two tables in the **ap-northeast-1** (Tokyo) region.
 
 2.  **Table 2: IPReputationTable**
     * **Partition Key:** `ip_address` (String)
+    * **Capacity Mode:** On-Demand
+
+3.  **Table 3: FluxConfig**
+    * **Partition Key:** `config_key` (String)
     * **Capacity Mode:** On-Demand
 
 ### Step 2.2: VPC Gateway Endpoint (CRITICAL)
@@ -38,21 +42,37 @@ We need two tables in the **ap-northeast-1** (Tokyo) region.
 
 ---
 
-## 3. Backend Deployment (EC2)
+## 3. Deployment
 
-***
+### CI/CD Automation
+This project uses GitHub Actions for continuous integration and continuous deployment. The deployment is divided into two workflows:
 
-**NOTE:** The deployment of the EC2 backend code is now automated through a CI/CD pipeline using GitHub Actions. Any push to the `main` branch with changes in the `src/backend` directory will automatically deploy the new code to the EC2 instance. The steps below are for the **initial setup** of a new EC2 instance and are preserved for reference.
+*   **Lambda Deployment (`.github/workflows/deploy.yml`):** On every push to the `main` branch with changes in the `src/lambda` directory, the workflow will automatically deploy the AWS Lambda functions.
+*   **EC2 Backend Deployment (`.github/workflows/deploy-backend.yml`):** On every push to the `main` branch with changes in the `src/backend` directory, the workflow will automatically deploy the EC2 backend.
 
-***
+**Secrets:**
+The deployment requires the following secrets to be configured in the GitHub repository:
+- `AWS_ACCESS_KEY_ID`
+- `AWS_SECRET_ACCESS_KEY`
+- `AWS_REGION`
+- `EC2_HOST`
+- `EC2_SSH_KEY`
 
-### Step 3.1: Launch Instance
+### Manual Deployment (for emergencies)
+The following steps are for manual deployment and should only be used if the CI/CD pipeline is unavailable.
+
+<details>
+<summary>Click to expand for manual deployment instructions</summary>
+
+### Backend Deployment (EC2)
+
+#### Step 3.1: Launch Instance
 1.  **OS:** Ubuntu 24.04 LTS or Amazon Linux 2023.
 2.  **Instance Type:** t2.micro (Free Tier).
 3.  **Key Pair:** Create/Select `test`.
 4.  **Network:** Default VPC, Public Subnet (Auto-assign Public IP: Enable).
 
-### Step 3.2: Configure Firewall (Security Group)
+#### Step 3.2: Configure Firewall (Security Group)
 *This allows the Lambda to talk to the EC2.*
 
 1.  Go to **Security Groups** > Select the EC2 SG.
@@ -62,7 +82,7 @@ We need two tables in the **ap-northeast-1** (Tokyo) region.
     * **Source:** `172.31.0.0/16` (Allows internal VPC traffic).
     * **Type:** SSH (22) -> Source: My IP / Anywhere IPv4. (For management)
 
-### Step 3.3: Initial Code Setup & Service Configuration
+#### Step 3.3: Initial Code Setup & Service Configuration
 SSH into the instance and run:
 
 ```bash
@@ -77,12 +97,8 @@ cd fluxcontrol
 pip3 install -r src/backend/requirements.txt
 
 # 4. Create Systemd Service (For auto-restart)
-# The backend service must implement a /health endpoint for the adaptive rate limiting to work.
-# See src/backend/main.py for an example.
 sudo nano /etc/systemd/system/fluxapi.service
 # Paste into fluxapi.service:
-
-# Ini, TOML
 
 [Unit]
 Description=FluxControl Backend API
@@ -99,20 +115,13 @@ RestartSec=3
 WantedBy=multi-user.target
 # Start the Service:
 
-# Bash
-
 sudo systemctl daemon-reload
 sudo systemctl enable fluxapi
 sudo systemctl start fluxapi
 ```
-## 4. Lambda Deployment (The Core)
+### Lambda Deployment (The Core)
 
-***
-
-**NOTE:** The deployment of the Lambda functions is now automated through a CI/CD pipeline using GitHub Actions. Any push to the `main` branch with changes in the `src/lambda` directory will automatically deploy the functions. The steps below are for manual deployment and are preserved for reference or emergency use.
-
-***
-### Step 4.1: RateLimiterLogic 
+#### Step 4.1: RateLimiterLogic
 Create a new Lambda function with the following settings:
 *   **Function Name:** `RateLimiterLogic`
 *   **Runtime:** Python 3.12
@@ -141,7 +150,7 @@ Before deploying, the private IP address of your EC2 backend **must be hardcoded
 *   Create a deployment package by zipping the contents of `src/lambda`. Make sure to include the `requests` library.
 *   Upload the zip file as the function's code.
 
-### Step 4.2: fluxcontrolAdmin 
+#### Step 4.2: fluxcontrolAdmin
 Create a new Lambda function with the following settings:
 *   **Function Name:** `fluxcontrolAdmin`
 *   **Runtime:** Python 3.12
@@ -152,13 +161,13 @@ Create a new role with the `AmazonDynamoDBFullAccess` policy.
 **Code:**
 *   Zip the `src/lambda/fluxcontrolAdmin.py` file and upload it as the function's code.
 
-## 5. API Gateway Setup
-### Step 5.1: Create API
+### API Gateway Setup
+#### Step 5.1: Create API
 Type: REST API.
 
 Name: `fluxcontrolAPI`.
 
-### Step 5.2: Configure Routes
+#### Step 5.2: Configure Routes
 **Resource: `/proxy`**
 
 Method: GET (or ANY).
@@ -177,21 +186,60 @@ Use Proxy Integration: YES.
 
 Enable CORS: Select "Enable CORS" on the `/admin` resource.
 
-### Step 5.3: Deploy
+#### Step 5.3: Deploy
 Click Actions > Deploy API.
 
 Stage Name: `dev`.
 
 Copy the Invoke URL.
+</details>
 
-## 6. Verification Checklist
-[ ] Backend Status: Run `curl http://localhost:8000` inside EC2. Should return `200 OK`.
+---
 
-[ ] VPC Link: Run `curl https://{api_id}.../dev/proxy`. Should return `200 OK`.
+## 4. Local Development Setup
 
-[ ] Rate Limit: Run the attack script (10 fast requests). Should see `429` errors.
+### Backend
+1.  Navigate to the `src/backend` directory.
+2.  Install the dependencies: `pip install -r requirements.txt`
+3.  Run the FastAPI server: `uvicorn main:app --reload`
+The backend will be available at `http://127.0.0.1:8000`.
 
-[ ] Admin Panel: Open `admin.html` and verify it loads the user list.
+### Lambda Functions
+Testing the Lambda functions locally is complex. It's recommended to deploy them to a development environment in AWS for testing. The `experiments/clients` directory contains scripts to test the deployed functions.
+
+---
+
+## 5. Verification Checklist
+[ ] **Local Backend:** Run `curl http://localhost:8000` locally. Should return `200 OK`.
+[ ] **Deployed Backend:** Run `curl http://{EC2_PUBLIC_IP}:8000` (if you have a public IP). Should return `200 OK`.
+[ ] **VPC Link:** Run `curl https://{api_id}.../dev/proxy`. Should return `200 OK`.
+[ ] **Rate Limit:** Run the `experiments/clients/adaptive_monitor.js` script. Should see `429` errors.
+[ ] **Shield Mode:** Run the `experiments/clients/smart_client.js` script. Should see the puzzle challenge and solution.
+[ ] **Admin Panel:** Make a `GET` request to `https://{api_id}.../dev/admin`. Should return a list of IPs.
+
+---
+
+## 6. Troubleshooting Guide
+
+*   **Issue:** `502 Bad Gateway` from the `/proxy` endpoint.
+    *   **Cause:** The Lambda function cannot reach the backend EC2 instance.
+    *   **Solution:**
+        1.  Verify the EC2 instance is running.
+        2.  Check the EC2 security group allows inbound traffic from the Lambda's security group on port 8000.
+        3.  Ensure the `TARGET_IP` in `src/lambda/RateLimiterLogic.py` is correct.
+
+*   **Issue:** Lambda function times out.
+    *   **Cause:** The Lambda function cannot access DynamoDB or the backend.
+    *   **Solution:**
+        1.  Verify the VPC Gateway Endpoint for DynamoDB is configured correctly.
+        2.  Check the Lambda's VPC and subnet settings.
+        3.  Increase the Lambda function's timeout setting.
+
+*   **Issue:** `403 Forbidden` for all requests.
+    *   **Cause:** Your IP address has been banned.
+    *   **Solution:** Use the Admin API to unban your IP or wait for the 24-hour ban to expire.
+
+---
 
 ## 7. Emergency Commands
 **Unlock a User Manually (CLI):**
@@ -201,6 +249,14 @@ curl -X POST https://{api_id}.execute-api.ap-northeast-1.amazonaws.com/dev/admin
    -H "Content-Type: application/json" \
    -d '{"ip": "1.2.3.4", "action": "unban"}'
 ```
+
+**Update System Configuration (CLI):**
+```bash
+curl -X POST https://{api_id}.execute-api.ap-northeast-1.amazonaws.com/dev/admin \
+   -H "Content-Type: application/json" \
+   -d '{"action": "config", "mode": "shield", "difficulty": 4, "cpu_threshold": 80}'
+```
+
 **Restart Backend:**
 
 ```bash

@@ -78,7 +78,7 @@ Performs various administrative actions.
     *   **Response:** `{"message": "User 1.2.3.4 VIP status REVOKED."}`
 
 5.  **`config`**: Update the global configuration of the rate limiter.
-    *   **Request Body:** `{"action": "config", "mode": "shield"}`
+    *   **Request Body:** `{"action": "config", "mode": "shield", "difficulty": 4, "cpu_threshold": 80}`
         *   `mode` can be `normal` or `shield`.
     *   **Response:** `{"message": "System Mode set to: shield"}`
 
@@ -103,16 +103,29 @@ Proxies requests to the backend service if the rate limit is not exceeded.
 
 ## Backend Health Endpoint
 
-For the adaptive rate limiting to work, your backend service must expose a `/health` endpoint.
+For the adaptive rate limiting to work, your backend service must expose a `/health` endpoint. This endpoint is part of the backend service itself, not the FluxControl API.
 
 *   **Method:** `GET`
 *   **Endpoint:** `/health`
 *   **Response Body:** A JSON object with the current CPU usage of the backend server.
     ```json
     {
+        "status": "alive",
         "cpu": 75.5
     }
     ```
+
+---
+
+## Configuration
+
+The system is configured via the `FluxConfig` table in DynamoDB. The `config` action of the `POST /admin` endpoint can be used to update these settings.
+
+| Parameter | Type | Description | Default |
+| :--- | :--- | :--- | :--- |
+| `mode` | String | The system mode. Can be `normal` or `shield`. | `normal` |
+| `difficulty`| Number | The difficulty of the proof-of-work puzzle in `shield` mode. | `4` |
+| `cpu_threshold`| Number | The CPU usage threshold for adaptive rate limiting. | `80` |
 
 ---
 
@@ -122,51 +135,72 @@ The proxy API can return the following error codes:
 
 | Code | Status | Description | Response Body |
 | :--- | :--- | :--- | :--- |
-| `401` | Unauthorized | **Shield Mode is active.** The client must solve a proof-of-work puzzle. | `{"error": "Shield Active. Solve Puzzle.", "challenge": "...", "difficulty": 4}` |
+| `401` | Unauthorized | **Shield Mode is active.** The client must solve a proof-of-work puzzle. The `challenge` and `difficulty` are provided in the response body. | `{"error": "Shield Active. Solve Puzzle.", "challenge": "...", "difficulty": 4}` |
 | `403` | Forbidden | The client's IP address is **banned**. | `{"error": "Access Denied", "message": "You are banned."}` |
 | `429` | Too Many Requests | The client has **exceeded the rate limit**. | `{"error": "Too Many Requests", "limit": 5}` |
 | `500` | Internal Server Error | An unexpected error occurred in the rate limiter logic. | `{"error": "Internal Logic Error", "details": "..."}` |
+| `502` | Bad Gateway | The backend service is down or unreachable. | N/A |
 
 ---
 
 ## Shield Mode (Proof-of-Work)
 
-When the system is in "shield" mode, the rate limiter will block all requests that don't include a valid puzzle solution in the headers. This is a defense mechanism against DDoS attacks.
+When the system is in "shield" mode, the rate limiter will block all requests that don't include a valid puzzle solution in the `X-Puzzle-Solution` header. This is a defense mechanism against DDoS attacks.
 
 **How it works:**
 
 1.  A client makes a request to `/proxy` without a solution.
-2.  The API responds with a `401 Unauthorized` and a JSON body containing a `challenge` (the client's IP address) and a `difficulty` (number of leading zeros).
-3.  The client needs to find a `solution` string such that `sha256(challenge + solution)` starts with the required number of zeros.
+2.  The API responds with a `401 Unauthorized` and a JSON body containing a `challenge` string and a `difficulty` number.
+3.  The client needs to find a `solution` (a number, or "nonce") such that the SHA-256 hash of the string `challenge + solution` starts with `difficulty` number of zeros.
 4.  The client then retries the request with the solution in the `X-Puzzle-Solution` header.
 
-**Example (JavaScript):**
+**Example Client-Side Implementation (JavaScript):**
 
 ```javascript
-async function solvePuzzle(challenge, difficulty) {
-    let solution = 0;
-    const prefix = '0'.repeat(difficulty);
-    while (true) {
-        const attempt = challenge + solution;
-        const hash = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(attempt));
-        const hashHex = Array.from(new Uint8Array(hash)).map(b => b.toString(16).padStart(2, '0')).join('');
-        if (hashHex.startsWith(prefix)) {
-            return solution;
+const crypto = require('crypto');
+
+async function solvePuzzleAndFetch(url) {
+    try {
+        const initialResponse = await fetch(url);
+
+        if (initialResponse.status === 401) {
+            console.log("Shield mode is active. Solving puzzle...");
+            const { challenge, difficulty } = await initialResponse.json();
+            
+            let solution = 0;
+            const prefix = '0'.repeat(difficulty);
+            
+            while (true) {
+                const attempt = challenge + solution;
+                const hash = crypto.createHash('sha256').update(attempt).digest('hex');
+                
+                if (hash.startsWith(prefix)) {
+                    console.log(`Puzzle solved! Nonce: ${solution}`);
+                    
+                    const retryResponse = await fetch(url, {
+                        headers: {
+                            'X-Puzzle-Solution': solution.toString()
+                        }
+                    });
+
+                    return retryResponse;
+                }
+                solution++;
+            }
+        } else {
+            return initialResponse;
         }
-        solution++;
+    } catch (error) {
+        console.error("Error during fetch:", error);
+        throw error;
     }
 }
 
-// ... in your API call ...
-const response = await fetch('/proxy');
-if (response.status === 401) {
-    const { challenge, difficulty } = await response.json();
-    const solution = await solvePuzzle(challenge, difficulty);
-    const retryResponse = await fetch('/proxy', {
-        headers: {
-            'X-Puzzle-Solution': solution
-        }
-    });
-    // ... handle retryResponse
-}
+// Usage
+const apiUrl = 'https://{api_id}.execute-api.ap-northeast-1.amazonaws.com/dev/proxy';
+
+solvePuzzleAndFetch(apiUrl)
+    .then(response => response.json())
+    .then(data => console.log("Success:", data))
+    .catch(error => console.error("Error:", error));
 ```
