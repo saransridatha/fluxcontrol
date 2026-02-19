@@ -131,7 +131,6 @@ fluxcontrol/
 │       ├── deploy-backend.yml  # Deploys the EC2 backend
 │       └── deploy.yml          # Deploys the Lambda functions
 ├── docs/
-│   ├── ADR.md                  # Architecture Decision Records
 |   ├── API.md                  # API Documentation
 │   ├── PRD.md                  # Product Requirements Document
 │   ├── RFC.md                  # Request for Comments
