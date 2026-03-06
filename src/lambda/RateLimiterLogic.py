@@ -15,6 +15,17 @@ reputation_table = dynamodb.Table('IPReputationTable')
 TARGET_IP = "http://172.31.34.253:8000"
 
 def lambda_handler(event, context):
+    if event['httpMethod'] == 'OPTIONS':
+        return {
+            'statusCode': 200,
+            'headers': {
+                'Access-Control-Allow-Origin': '*',
+                'Access-control-allow-methods': 'OPTIONS,POST,GET',
+                'Access-Control-Allow-Headers': 'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token,X-Puzzle-Solution',
+            },
+            'body': ''
+        }
+        
     print(f"DEBUG: Lambda Started. Target: {TARGET_IP}")
     
     try:
@@ -99,7 +110,11 @@ def lambda_handler(event, context):
         return {
             'statusCode': backend_resp.status_code,
             'body': backend_resp.text,
-            'headers': {'Content-Type': 'application/json'}
+            'headers': {
+                'Content-Type': 'application/json',
+                'Access-Control-Allow-Origin': '*',
+                'Access-Control-Allow-Headers': 'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token,X-Puzzle-Solution',
+            },
         }
 
     except Exception as e:
@@ -110,7 +125,11 @@ def response(code, body_dict):
     return {
         'statusCode': code,
         'body': json.dumps(body_dict),
-        'headers': {'Content-Type': 'application/json'}
+        'headers': {
+            'Content-Type': 'application/json',
+            'Access-Control-Allow-Origin': '*',
+            'Access-Control-Allow-Headers': 'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token,X-Puzzle-Solution',
+        },
     }
 
 def update_dashboard(ip, is_violation=False):

@@ -1,0 +1,81 @@
+.app-shell {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  max-width: 1320px;
+  margin: 0 auto;
+  padding: 0 20px;
+}
+
+.app-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 20px 0 24px;
+  border-bottom: 1px solid rgba(255,255,255,0.06);
+  margin-bottom: 24px;
+}
+
+.logo-group {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.logo-icon {
+  font-size: 1.6rem;
+  filter: drop-shadow(0 0 8px rgba(99, 102, 241, 0.6));
+}
+
+.logo-text {
+  font-size: 1.5rem;
+  font-weight: 800;
+  background: linear-gradient(135deg, #818cf8, #c084fc);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+  margin: 0;
+}
+
+.header-subtitle {
+  font-size: 0.78rem;
+  color: #64748b;
+  font-weight: 500;
+}
+
+.app-grid {
+  display: grid;
+  grid-template-columns: 380px 1fr;
+  gap: 24px;
+  flex: 1;
+}
+
+.sidebar {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.main-content {
+  min-width: 0;
+}
+
+.app-footer {
+  padding: 20px 0;
+  margin-top: 24px;
+  border-top: 1px solid rgba(255,255,255,0.06);
+  text-align: center;
+  font-size: 0.75rem;
+  color: #475569;
+}
+
+@media (max-width: 900px) {
+  .app-grid {
+    grid-template-columns: 1fr;
+  }
+  .app-header {
+    flex-direction: column;
+    gap: 4px;
+    text-align: center;
+  }
+}
