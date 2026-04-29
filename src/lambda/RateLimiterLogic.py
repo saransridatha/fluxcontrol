@@ -12,7 +12,7 @@ rate_table = dynamodb.Table('RateLimitTable')
 config_table = dynamodb.Table('FluxConfig')
 reputation_table = dynamodb.Table('IPReputationTable')
 
-TARGET_IP = "http://172.31.34.253:8000"
+TARGET_IP = "http://172.31.39.156:8000"
 
 def lambda_handler(event, context):
     if event['httpMethod'] == 'OPTIONS':
