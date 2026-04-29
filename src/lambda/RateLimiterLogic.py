@@ -9,7 +9,7 @@ from botocore.exceptions import ClientError
 
 dynamodb = boto3.resource('dynamodb', region_name='ap-northeast-1')
 rate_table = dynamodb.Table('RateLimitTable')
-config_table = dynamodb.Table('FluxConfig')
+config_table = dynamodb.Table('GlobalConfigTable')
 reputation_table = dynamodb.Table('IPReputationTable')
 
 TARGET_IP = "http://172.31.39.156:8000"
@@ -43,7 +43,7 @@ def lambda_handler(event, context):
             print(f"DEBUG: Ban Check Failed: {e}")
 
         try:
-            config_item = config_table.get_item(Key={'config_key': 'global'})['Item']
+            config_item = config_table.get_item(Key={'config_id': 'global'})['Item']
             mode = config_item.get('mode', 'normal')
             difficulty = int(config_item.get('difficulty', 4))
             cpu_threshold = int(config_item.get('cpu_threshold', 80))
@@ -53,6 +53,7 @@ def lambda_handler(event, context):
             mode = 'normal'
             difficulty = 4
             cpu_threshold = 80
+            custom_ratelimit = 5
 
         if mode == 'shield':
             headers = event.get('headers') or {}
@@ -70,7 +71,7 @@ def lambda_handler(event, context):
                     'difficulty': difficulty
                 })
 
-        current_limit = 5
+        current_limit = custom_ratelimit
         try:
             health_resp = requests.get(f"{TARGET_IP}/health", timeout=0.5)
             server_cpu = health_resp.json().get('cpu', 0)
