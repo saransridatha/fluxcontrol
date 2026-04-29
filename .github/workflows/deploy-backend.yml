@@ -24,8 +24,8 @@ jobs:
           # 2. Install any new libraries (using the permanent venv)
           ./venv/bin/pip install -r src/backend/requirements.txt
           
-          # 3. Restart the Service (Linux handles the rest)
-          sudo systemctl restart fluxbackend
+          # 3. Restart the Service
+          sudo systemctl restart fluxapi
           
-          # 4. Check Status (Optional, for logs)
-          systemctl status fluxbackend --no-pager
+          # 4. Check Status
+          systemctl status fluxapi --no-pager
