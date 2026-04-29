@@ -71,7 +71,7 @@ def lambda_handler(event, context):
                     'difficulty': difficulty
                 })
 
-        current_limit = custom_ratelimit
+        current_limit = 5
         try:
             health_resp = requests.get(f"{TARGET_IP}/health", timeout=0.5)
             server_cpu = health_resp.json().get('cpu', 0)
