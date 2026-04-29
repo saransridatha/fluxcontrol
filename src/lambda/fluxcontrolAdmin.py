@@ -6,7 +6,7 @@ from decimal import Decimal
 
 dynamodb = boto3.resource('dynamodb')
 rep_table = dynamodb.Table('IPReputationTable')
-config_table = dynamodb.Table('FluxConfig')
+config_table = dynamodb.Table('GlobalConfigTable')
 
 class DecimalEncoder(json.JSONEncoder):
     def default(self, obj):
@@ -85,11 +85,17 @@ def lambda_handler(event, context):
 
             elif action == 'config':
                 mode = body.get('mode')
+                # Grab values from frontend or fallback to defaults
+                difficulty = int(body.get('difficulty', 3))
+                cpu_threshold = int(body.get('threshold', 80))
+                ratelimit = int(body.get('ratelimit', 5))
+                
                 config_table.put_item(Item={
-                    'config_key': 'global',
+                    'config_id': 'global',   # FIXED PARTITION KEY
                     'mode': mode,
-                    'difficulty': 4,
-                    'cpu_threshold': 80
+                    'difficulty': difficulty,
+                    'cpu_threshold': cpu_threshold,
+                    'ratelimit': ratelimit
                 })
                 msg = f"System Mode set to: {mode}"
 
